@@ -1,0 +1,27 @@
+{
+  "widget": {
+    "name": "amo-control-widget",
+    "description": "Контроль активности менеджеров",
+    "short_description": "Отчеты активности",
+    "code": "amo_control_widget_private",
+    "secret_key": "",
+    "version": "0.1.0",
+    "interface_version": 2,
+    "init_once": false,
+    "locale": ["ru", "en"],
+    "installation": true
+  },
+  "locations": ["settings", "lcard-1", "ccard-1", "comcard-1"],
+  "settings": {
+    "backend_url": {
+      "name": "Backend URL",
+      "type": "text",
+      "required": true
+    },
+    "widget_token": {
+      "name": "Widget token",
+      "type": "text",
+      "required": false
+    }
+  }
+}

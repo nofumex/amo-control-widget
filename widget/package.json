@@ -1,0 +1,16 @@
+{
+  "name": "amo-control-widget",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "zip:private": "node build-widget-zip.mjs private",
+    "zip:public": "node build-widget-zip.mjs public"
+  },
+  "devDependencies": {
+    "archiver": "^7.0.1",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.0"
+  }
+}

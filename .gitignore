@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.pyc
+*.sqlite3
+*.db
+logs/
+dist/
+widget/dist/
+widget/node_modules/
+widget/*.zip
+coverage.xml
+.coverage

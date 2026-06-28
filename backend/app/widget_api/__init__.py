@@ -1,0 +1,1 @@
+"""Widget-facing FastAPI routes."""

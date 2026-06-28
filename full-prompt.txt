@@ -1,0 +1,1074 @@
+Ты — senior full-stack/product engineer. Реализуй с нуля production-ready проект в текущей пустой папке `amo-control-widget`.
+
+Рядом с текущей папкой лежит исходный репозиторий:
+
+`../control-agent`
+
+Также публичная ссылка на него:
+
+`https://github.com/nofumex/control-agent`
+
+Твоя задача — создать новый отдельный проект, НЕ модифицируя `../control-agent`, но внимательно изучив и переиспользовав его доменную логику. Нужно реализовать полноценный amoCRM/Kommo widget + backend + Telegram delivery, чтобы функционал текущего Telegram-бота с отчетами по менеджерам был перенесен в виджет amoCRM и стал настраиваемым из интерфейса amoCRM.
+
+Главная цель: в одной кодовой базе должны поддерживаться 2 режима:
+
+1. `private` — private integration/MVP для установки в конкретный amoCRM аккаунт без публикации в маркетплейсе.
+2. `public` — public Marketplace-ready integration для amoMarket/Kommo Marketplace, с multi-tenant архитектурой, OAuth lifecycle, безопасным хранением токенов и настройками на каждый аккаунт.
+
+Проект должен быть готов к реальному запуску через Docker Compose и содержать backend, worker, frontend/widget package, миграции БД, документацию, тесты, примеры env, команды запуска, health checks и build-пайплайн.
+
+---
+
+# 1. Сначала изучи старый репозиторий
+
+Перед генерацией нового проекта обязательно прочитай:
+
+* `../control-agent/README.md`
+* `../control-agent/pyproject.toml`
+* `../control-agent/src/control_agent/config.py`
+* `../control-agent/src/control_agent/amocrm.py`
+* `../control-agent/src/control_agent/metrics.py`
+* `../control-agent/src/control_agent/storage.py`
+* `../control-agent/src/control_agent/bot.py`
+* `../control-agent/tests/test_metrics.py`
+
+Из старого проекта нужно понять и перенести в новый проект:
+
+* расчет непрерывного рабочего времени;
+* текущий набор событий активности:
+
+  * `task_completed`
+  * `common_note_added`
+  * `incoming_call`
+  * `outgoing_call`
+  * `task_deadline_changed`
+* фильтрацию звонков по длительности через `note.params.duration`;
+* расчет overdue tasks;
+* работу с `/api/v4/events`;
+* работу с `/api/v4/events/types`;
+* работу с `/api/v4/users`;
+* работу с `/api/v4/account`;
+* работу с `/api/v4/tasks`;
+* кеширование call notes;
+* генерацию текстового отчета;
+* raw JSON snapshot отчета;
+* Telegram-доставку отчета;
+* команды/идеи текущего Telegram-бота, но НЕ делай Telegram основным UI. Telegram должен быть delivery channel, а основной UI должен быть amoCRM widget.
+
+Не копируй старую архитектуру 1-в-1. Старый проект Telegram-first и single-tenant. Новый проект должен быть widget/backend-first и multi-tenant.
+
+---
+
+# 2. Технологический стек
+
+Используй следующий стек:
+
+## Backend
+
+* Python 3.12
+* FastAPI
+* SQLAlchemy 2.x async
+* Alembic
+* PostgreSQL как основная production БД
+* SQLite только опционально для локального dev/test, если удобно
+* Redis для очередей/locks/cache
+* httpx для amoCRM и Telegram API
+* Pydantic v2
+* pytest
+* ruff
+* mypy, насколько разумно
+* structlog или стандартный logging с JSON formatter
+* Docker + Docker Compose
+
+Backend должен быть разделен на API-процесс и worker-процесс.
+
+## Worker
+
+Worker должен выполнять:
+
+* периодическую синхронизацию событий amoCRM;
+* построение daily report snapshots;
+* отправку отчетов в Telegram;
+* retry failed deliveries;
+* refresh OAuth tokens;
+* обработку webhook event inbox.
+
+Можно использовать ARQ/RQ/Celery/APScheduler. Выбери простой и надежный вариант. Предпочтительно: ARQ или RQ + Redis, либо собственный async worker с polling loop и advisory locks. Главное — чтобы было надежно, тестируемо и понятно.
+
+## Widget/frontend
+
+amoCRM widget должен быть отдельным пакетом:
+
+* plain TypeScript или vanilla JS, совместимый с amoCRM widget model;
+* `manifest.json`;
+* `script.js`;
+* `i18n/ru.json`;
+* `i18n/en.json`;
+* `templates/` если нужно;
+* `styles/` если нужно;
+* build script, который собирает `widget.zip`.
+
+Не делай тяжелое SPA на React, если это усложняет загрузку в amoCRM. Можно использовать простой TypeScript + DOM rendering + fetch к backend.
+
+---
+
+# 3. Целевая структура проекта
+
+Создай примерно такую структуру:
+
+```text
+amo-control-widget/
+  README.md
+  Makefile
+  docker-compose.yml
+  docker-compose.prod.yml
+  .env.example
+  .gitignore
+  pyproject.toml
+
+  backend/
+    app/
+      __init__.py
+      main.py
+
+      core/
+        config.py
+        logging.py
+        security.py
+        crypto.py
+        errors.py
+        time.py
+
+      db/
+        base.py
+        session.py
+        models.py
+        migrations/
+        alembic.ini
+
+      amo/
+        client.py
+        oauth.py
+        schemas.py
+        rate_limit.py
+        webhooks.py
+
+      reports/
+        metrics.py
+        builder.py
+        renderer.py
+        schemas.py
+        event_catalog.py
+
+      telegram/
+        client.py
+        delivery.py
+        schemas.py
+
+      tenants/
+        service.py
+        schemas.py
+
+      widget_api/
+        auth.py
+        routes_settings.py
+        routes_reports.py
+        routes_status.py
+        routes_telegram.py
+        routes_oauth.py
+        routes_webhooks.py
+
+      worker/
+        main.py
+        scheduler.py
+        jobs.py
+        locks.py
+
+    tests/
+      test_metrics.py
+      test_report_builder.py
+      test_crypto.py
+      test_oauth.py
+      test_telegram.py
+      test_settings_validation.py
+
+  widget/
+    package.json
+    tsconfig.json
+    vite.config.ts or build script
+    src/
+      script.ts
+      api.ts
+      settings_page.ts
+      reports_page.ts
+      status_page.ts
+      telegram_page.ts
+      amo.ts
+      styles.css
+    public/
+      manifest.private.json
+      manifest.public.json
+      i18n/
+        ru.json
+        en.json
+      images/
+    dist/
+    build-widget-zip.mjs
+
+  docs/
+    ARCHITECTURE.md
+    AMO_SETUP_PRIVATE.md
+    AMO_SETUP_PUBLIC.md
+    TELEGRAM_SETUP.md
+    SECURITY.md
+    DEPLOYMENT.md
+    MODERATION_CHECKLIST.md
+```
+
+Если считаешь нужным немного изменить структуру — можно, но сохрани разделение backend/widget/docs/tests.
+
+---
+
+# 4. Бизнес-функционал
+
+Нужно реализовать продукт: “Контроль активности менеджеров amoCRM”.
+
+Система должна:
+
+1. Подключаться к amoCRM через OAuth.
+2. Получать события, задачи, пользователей, аккаунт и примечания.
+3. Позволять в amoCRM widget UI выбирать, какие события считать активностью.
+4. Позволять выбирать, какие события считать счетчиками/штрафами.
+5. Позволять выбирать менеджеров/пользователей, которых нужно учитывать.
+6. Позволять настраивать группы/отделы отчетности.
+7. Позволять настраивать интервал непрерывной работы:
+
+   * default: 10 минут
+   * можно поставить 5/10/15/30 и произвольное значение в диапазоне 1–180 минут.
+8. Позволять настраивать минимальную длительность входящих звонков:
+
+   * default: 30 секунд.
+9. Позволять настраивать минимальную длительность исходящих звонков:
+
+   * default: 0 секунд.
+10. Позволять выбирать timezone:
+
+* default брать из amoCRM account datetime settings;
+* можно переопределить вручную.
+
+11. Позволять настраивать расписание daily report:
+
+* build hour;
+* send hour;
+* включить/выключить автоотправку.
+
+12. Позволять строить отчет вручную за дату.
+13. Позволять смотреть отчеты внутри widget UI.
+14. Позволять отправлять отчет в Telegram.
+15. Позволять проверить Telegram token/chat_id через кнопку “Отправить тест”.
+16. Позволять видеть статус интеграции:
+
+* OAuth connected/disconnected;
+* last sync;
+* next sync;
+* last report build;
+* last delivery;
+* latest errors;
+* number of enabled users;
+* enabled Telegram delivery yes/no.
+
+---
+
+# 5. Поддерживаемые amoCRM события
+
+Сделай настраиваемый каталог событий.
+
+Минимальный обязательный каталог:
+
+```text
+task_completed
+task_deadline_changed
+common_note_added
+incoming_call
+outgoing_call
+lead_status_changed
+entity_responsible_changed
+lead_created
+lead_deleted
+contact_created
+company_created
+customer_created
+incoming_chat_message
+outgoing_chat_message
+incoming_sms
+outgoing_sms
+entity_linked
+entity_unlinked
+custom_field_value_changed
+```
+
+Важно:
+
+* Не все события одинаково доступны через webhooks. Основным источником правды должен быть pull через `/api/v4/events`.
+* Webhooks/Digital Pipeline можно использовать как ускоритель, но не как единственный источник.
+* Для звонков использовать event + note lookup, как в старом проекте, чтобы достать `params.duration`.
+* Для stage transitions использовать `lead_status_changed`, pipeline/status filters и/или Digital Pipeline как optional ускоритель.
+* Сделай структуру `EventCatalogItem`, где для каждого события есть:
+
+  * `code`
+  * `title_ru`
+  * `title_en`
+  * `description_ru`
+  * `default_enabled_as_activity`
+  * `default_enabled_as_counter`
+  * `default_enabled_as_penalty`
+  * `requires_note_lookup`
+  * `supports_stage_filter`
+  * `source`: `events_api | tasks_api | notes_api | webhook | digital_pipeline`
+
+---
+
+# 6. Алгоритм непрерывной работы
+
+Перенеси и покрой тестами алгоритм из `control-agent`.
+
+Смысл:
+
+* На вход идут timestamps активных событий пользователя за день.
+* Timestamps сортируются.
+* Дубликаты убираются.
+* Суммируются только промежутки между соседними событиями, если:
+
+  * gap > 0
+  * gap <= max_gap_seconds
+* Если gap больше лимита — он не считается рабочим временем.
+* max_gap_seconds = `work_session_gap_minutes * 60`.
+
+Добавь тесты:
+
+```python
+continuous_work_seconds([0, 60, 600, 1201, 1261], 600) == 60 + 540 + 60
+```
+
+Добавь edge cases:
+
+* пустой список;
+* одно событие;
+* дубликаты;
+* unordered timestamps;
+* gap ровно равен лимиту;
+* gap больше лимита;
+* timezone day boundaries.
+
+---
+
+# 7. Модель отчетов
+
+Daily report должен строиться по tenant/account/date.
+
+Минимальный отчет на пользователя:
+
+```json
+{
+  "user_id": 123,
+  "name": "Иван Иванов",
+  "group": "Продажи",
+  "continuous_work_seconds": 14400,
+  "activity_events_count": 52,
+  "completed_tasks_count": 18,
+  "deadline_changes_count": 3,
+  "overdue_tasks_count": 2,
+  "incoming_calls_count": 11,
+  "outgoing_calls_count": 7,
+  "notes_count": 14,
+  "first_activity_at": "2026-06-28T08:55:00+03:00",
+  "last_activity_at": "2026-06-28T18:11:00+03:00",
+  "event_breakdown": {
+    "task_completed": 18,
+    "incoming_call": 11
+  }
+}
+```
+
+Report snapshot должен хранить:
+
+* tenant/account id;
+* date;
+* timezone;
+* config version/hash;
+* raw JSON;
+* rendered text;
+* created_at;
+* source window start/end;
+* статус построения;
+* ошибки, если есть.
+
+Сделай renderer для Telegram text report на русском.
+
+Пример формата:
+
+```text
+📊 Отчет по активности менеджеров за 28.06.2026
+
+Группа: Продажи
+
+1. Иван Иванов
+   ⏱ Непрерывная работа: 4ч 12м
+   ✅ Задач выполнено: 18
+   ☎️ Входящие: 11
+   📞 Исходящие: 7
+   📝 Примечания: 14
+   ⚠️ Просрочено задач: 2
+   🕘 Первая активность: 08:55
+   🕕 Последняя активность: 18:11
+
+...
+```
+
+Также добавь API, который отдает JSON report и rendered text.
+
+---
+
+# 8. База данных
+
+Сделай SQLAlchemy models + Alembic migrations.
+
+Минимальные таблицы:
+
+## `tenants`
+
+* `id`
+* `account_id`
+* `subdomain`
+* `base_url`
+* `mode`: `private | public`
+* `status`: `active | disabled | oauth_error | deleted`
+* `created_at`
+* `updated_at`
+
+## `oauth_tokens`
+
+* `id`
+* `tenant_id`
+* `access_token_encrypted`
+* `refresh_token_encrypted`
+* `expires_at`
+* `scope`
+* `created_at`
+* `updated_at`
+
+## `report_configs`
+
+* `id`
+* `tenant_id`
+* `version`
+* `enabled`
+* `timezone`
+* `work_session_gap_minutes`
+* `incoming_call_min_duration_seconds`
+* `outgoing_call_min_duration_seconds`
+* `enabled_activity_events` JSON
+* `enabled_counter_events` JSON
+* `enabled_penalty_events` JSON
+* `stage_transition_filters` JSON
+* `selected_user_ids` JSON
+* `user_groups` JSON
+* `excluded_user_ids` JSON
+* `build_hour`
+* `send_hour`
+* `auto_send_enabled`
+* `live_sync_interval_seconds`
+* `created_at`
+* `updated_at`
+
+## `telegram_channels`
+
+* `id`
+* `tenant_id`
+* `enabled`
+* `bot_token_encrypted`
+* `admin_chat_id_encrypted`
+* `admin_username`
+* `last_test_status`
+* `last_test_at`
+* `created_at`
+* `updated_at`
+
+## `report_snapshots`
+
+* `id`
+* `tenant_id`
+* `report_date`
+* `timezone`
+* `config_version`
+* `config_hash`
+* `raw_json`
+* `rendered_text`
+* `status`
+* `error_message`
+* `created_at`
+
+## `delivery_logs`
+
+* `id`
+* `tenant_id`
+* `snapshot_id`
+* `channel`: `telegram | widget`
+* `status`: `pending | sent | failed`
+* `attempts`
+* `last_error`
+* `sent_at`
+* `created_at`
+* `updated_at`
+
+## `call_note_cache`
+
+* `id`
+* `tenant_id`
+* `entity_type`
+* `entity_id`
+* `note_id`
+* `payload_json`
+* `duration_seconds`
+* `created_at`
+* `updated_at`
+
+## `sync_state`
+
+* `id`
+* `tenant_id`
+* `last_events_sync_at`
+* `last_tasks_sync_at`
+* `last_success_at`
+* `last_error`
+* `next_sync_at`
+* `created_at`
+* `updated_at`
+
+## `event_inbox`
+
+* `id`
+* `tenant_id`
+* `source`
+* `payload_json`
+* `status`
+* `received_at`
+* `processed_at`
+* `error_message`
+
+Секреты обязательно хранить encrypted-at-rest. Добавь `APP_SECRET_KEY`/`FERNET_KEY` и модуль `crypto.py`.
+
+---
+
+# 9. OAuth amoCRM/Kommo
+
+Реализуй полный OAuth lifecycle.
+
+Нужны endpoints:
+
+```text
+GET  /api/oauth/install
+GET  /api/oauth/callback
+POST /api/oauth/refresh/{tenant_id}
+POST /api/oauth/disconnect/{tenant_id}
+```
+
+Поведение:
+
+* callback принимает `code`, `referer`, `from_widget` и другие параметры, если amoCRM их передает;
+* определяет base_url/subdomain;
+* обменивает authorization code на access/refresh token;
+* получает `/api/v4/account`;
+* создает/обновляет tenant;
+* сохраняет encrypted tokens;
+* создает default report config;
+* возвращает понятный HTML/JSON ответ.
+
+Важно:
+
+* access token живет ограниченное время;
+* refresh token надо обновлять заранее и транзакционно;
+* при каждом refresh сохраняется новый refresh token;
+* при OAuth ошибках tenant переводится в `oauth_error`.
+
+Сделай AmoClient:
+
+* async httpx;
+* automatic bearer auth;
+* automatic refresh on 401, если возможно;
+* rate limiting не более 7 RPS на интеграцию и с запасом;
+* retry на 429/5xx;
+* pagination;
+* методы:
+
+  * `get_account()`
+  * `get_users()`
+  * `get_event_types()`
+  * `get_events(...)`
+  * `get_note(entity_type, entity_id, note_id)`
+  * `get_incomplete_tasks_due_to(...)`
+  * `get_pipelines()` если нужно для stage filters
+  * `get_custom_fields(entity_type)` если нужно для field selection
+
+---
+
+# 10. Widget API
+
+Сделай backend endpoints для widget frontend.
+
+Все endpoints должны быть tenant-aware.
+
+Минимально:
+
+```text
+GET  /api/widget/status
+GET  /api/widget/settings
+PUT  /api/widget/settings
+GET  /api/widget/event-catalog
+GET  /api/widget/users
+GET  /api/widget/pipelines
+GET  /api/widget/custom-fields
+GET  /api/widget/reports
+GET  /api/widget/reports/{date}
+POST /api/widget/reports/{date}/build
+POST /api/widget/reports/{date}/send-telegram
+GET  /api/widget/telegram
+PUT  /api/widget/telegram
+POST /api/widget/telegram/test
+POST /api/widget/sync
+POST /api/widget/disconnect
+```
+
+Аутентификация widget → backend:
+
+* Для MVP можно использовать signed tenant token/dev token, но аккуратно изолируй это в `widget_api/auth.py`.
+* Для public режима реализуй механизм, совместимый с amoCRM/Kommo widget requests/disposable JWT where applicable.
+* Не доверяй tenant_id из frontend без проверки.
+* Добавь CORS только для разрешенных amoCRM/Kommo origins и dev origin.
+* Нельзя светить encrypted secrets в API responses.
+* `bot_token` при чтении настроек возвращай только masked, например `123456:AA***`.
+
+---
+
+# 11. Widget UI
+
+Сделай amoCRM widget package.
+
+В widget должны быть:
+
+1. `manifest.private.json`
+2. `manifest.public.json`
+3. `script.ts` / `script.js`
+4. `ru.json`
+5. `en.json`
+6. build command для zip.
+
+UI должен содержать advanced settings page с вкладками:
+
+## Вкладка “Статус”
+
+Показывает:
+
+* подключение amoCRM;
+* режим: private/public;
+* tenant/account;
+* last sync;
+* next sync;
+* last report;
+* last Telegram delivery;
+* последняя ошибка;
+* кнопки:
+
+  * “Синхронизировать сейчас”
+  * “Построить отчет за сегодня”
+  * “Открыть последний отчет”
+
+## Вкладка “Настройки отчета”
+
+Поля:
+
+* timezone;
+* work session gap minutes;
+* incoming call min duration seconds;
+* outgoing call min duration seconds;
+* live sync interval seconds;
+* build hour;
+* send hour;
+* auto send enabled.
+
+## Вкладка “События”
+
+Группы checkbox:
+
+* считать активностью;
+* считать счетчиком;
+* считать штрафом;
+* stage transition filters.
+
+Список событий бери из backend `/api/widget/event-catalog`.
+
+## Вкладка “Сотрудники”
+
+* список пользователей amoCRM;
+* checkbox “учитывать в отчете”;
+* group name input/select;
+* excluded flag;
+* search/filter.
+
+## Вкладка “Отчеты”
+
+* date picker;
+* build report;
+* show JSON/raw optionally;
+* show rendered text;
+* send to Telegram;
+* download/copy report.
+
+## Вкладка “Telegram”
+
+* enable Telegram delivery;
+* bot token input;
+* admin chat id input;
+* admin username optional;
+* masked current token display;
+* test button;
+* last test status.
+
+UX должен быть простой, без тяжелых зависимостей. Все ошибки показывать человеку понятным русским текстом.
+
+---
+
+# 12. Telegram integration
+
+Реализуй Telegram как delivery channel.
+
+Нужно:
+
+* хранить bot token encrypted;
+* хранить admin chat id encrypted;
+* отправлять тестовое сообщение;
+* отправлять report snapshot;
+* логировать delivery attempts;
+* retries with exponential backoff;
+* понятная ошибка, если:
+
+  * token invalid;
+  * chat_id invalid;
+  * бот не был запущен пользователем;
+  * Telegram API недоступен.
+
+Не обязательно реализовывать полный interactive Telegram bot как в старом проекте в первой версии. Но нужно заложить архитектуру, чтобы later добавить команды `/today`, `/yesterday`, `/date`, `/top`.
+
+Минимум production-ready:
+
+* `TelegramClient.send_message(chat_id, text)`
+* `TelegramDeliveryService.test_channel(...)`
+* `TelegramDeliveryService.send_report(snapshot)`
+* retries
+* delivery logs.
+
+---
+
+# 13. Sync/report worker
+
+Worker должен:
+
+1. Регулярно проходить по active tenants.
+2. Refresh OAuth tokens заранее.
+3. Pull events за нужное окно.
+4. Pull tasks.
+5. Fetch call notes по необходимости.
+6. Build report snapshots по расписанию.
+7. Send reports по расписанию.
+8. Process event inbox from webhooks.
+9. Не запускать два одинаковых job одновременно для одного tenant/date.
+10. Писать sync_state и errors.
+
+Сделай lock mechanism через Redis.
+
+Для MVP можно не хранить все события в отдельной таблице, а строить snapshot pull-based по date window. Но event_inbox должен быть для webhooks.
+
+---
+
+# 14. Webhooks и Digital Pipeline
+
+Добавь endpoints:
+
+```text
+POST /api/webhooks/amo
+POST /api/webhooks/digital-pipeline
+```
+
+Поведение:
+
+* быстро принять payload;
+* определить tenant по account/subdomain, если возможно;
+* положить payload в `event_inbox`;
+* вернуть 200/204 быстро;
+* обработку делать в worker.
+
+Важно: webhooks не должны быть единственным источником правды. Daily report должен пересчитываться pull-based через `/api/v4/events`.
+
+---
+
+# 15. Public/private режимы
+
+В `.env`:
+
+```env
+APP_ENV=local
+INTEGRATION_MODE=private
+PUBLIC_BASE_URL=https://example.com
+
+AMO_CLIENT_ID=
+AMO_CLIENT_SECRET=
+AMO_REDIRECT_URI=
+
+DATABASE_URL=postgresql+asyncpg://...
+REDIS_URL=redis://redis:6379/0
+FERNET_KEY=
+CORS_ALLOWED_ORIGINS=
+
+LOG_LEVEL=INFO
+```
+
+Private режим:
+
+* можно проще подключить конкретный аккаунт;
+* без маркетплейс модерации;
+* но архитектура все равно multi-tenant.
+
+Public режим:
+
+* не хардкодить один аккаунт;
+* корректный OAuth install/callback;
+* безопасное хранение токенов;
+* документация для amoMarket;
+* widget zip;
+* privacy/security docs;
+* moderation checklist.
+
+Сделай документацию отдельно:
+
+* `docs/AMO_SETUP_PRIVATE.md`
+* `docs/AMO_SETUP_PUBLIC.md`
+* `docs/MODERATION_CHECKLIST.md`
+
+---
+
+# 16. Security requirements
+
+Обязательно:
+
+* encrypted storage for amo refresh/access tokens;
+* encrypted storage for Telegram bot token and chat id;
+* masked secrets in API responses;
+* no secrets in logs;
+* request validation;
+* CORS restrictions;
+* rate limiting for external API calls;
+* safe error messages;
+* structured logs;
+* tenant isolation;
+* no hardcoded company-specific user IDs;
+* no hardcoded Telegram admin ID;
+* no hardcoded amoCRM access token;
+* `.env.example`, but real secrets excluded;
+* `.gitignore`.
+
+Добавь `docs/SECURITY.md`.
+
+---
+
+# 17. Tests
+
+Добавь тесты минимум на:
+
+* `continuous_work_seconds`
+* report builder aggregation;
+* call duration filtering;
+* settings validation;
+* crypto encrypt/decrypt;
+* Telegram token masking;
+* report rendering;
+* OAuth token expiry helper;
+* tenant isolation basics.
+
+Команды:
+
+```bash
+make test
+make lint
+make typecheck
+```
+
+Если typecheck слишком тяжелый, пусть будет best-effort, но `make test` и `make lint` должны работать.
+
+---
+
+# 18. Docker и запуск
+
+Сделай:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Сервисы:
+
+* `api`
+* `worker`
+* `postgres`
+* `redis`
+
+Health endpoints:
+
+```text
+GET /health
+GET /ready
+```
+
+README должен содержать:
+
+* что делает проект;
+* отличие private/public;
+* как запустить локально;
+* как создать private integration;
+* как настроить OAuth redirect;
+* как собрать widget.zip;
+* как подключить Telegram;
+* как построить тестовый отчет;
+* как запустить тесты.
+
+---
+
+# 19. Качество реализации
+
+Не оставляй пустые заглушки для core logic. Если какая-то часть platform-specific и ее нельзя проверить без реального amoCRM аккаунта, реализуй интерфейс, валидацию, документацию и понятный TODO-комментарий только там, где действительно нужен внешний аккаунт.
+
+Код должен быть production-oriented:
+
+* маленькие сервисы;
+* типизированные схемы;
+* понятные ошибки;
+* тестируемая бизнес-логика отдельно от API;
+* не смешивать Telegram/UI/report calculation;
+* domain logic должна жить в `reports/`;
+* API clients отдельно;
+* DB отдельно;
+* widget UI отдельно.
+
+---
+
+# 20. Acceptance criteria
+
+После выполнения должны быть возможны следующие сценарии.
+
+## Scenario A: local startup
+
+```bash
+cp .env.example .env
+docker compose up --build
+curl http://localhost:8000/health
+```
+
+Получаем healthy response.
+
+## Scenario B: tests
+
+```bash
+make test
+make lint
+```
+
+Проходят.
+
+## Scenario C: widget build
+
+```bash
+cd widget
+npm install
+npm run build
+npm run zip:private
+npm run zip:public
+```
+
+Получаются zip-архивы для amoCRM widget.
+
+## Scenario D: settings API
+
+Backend имеет endpoint, который позволяет сохранить настройки:
+
+* events;
+* users;
+* work session interval;
+* Telegram settings;
+* report schedule.
+
+## Scenario E: report build
+
+Можно вызвать API build report за дату. Если нет реального amoCRM подключения, тесты должны проверять report builder на mocked events/tasks/users.
+
+## Scenario F: Telegram test
+
+Можно сохранить Telegram token/chat_id и вызвать test endpoint. При mocked Telegram API тест должен проходить.
+
+---
+
+# 21. Очень важные продуктовые решения
+
+Сделай именно так:
+
+1. Основной источник исторических отчетов — pull через amoCRM `/api/v4/events`, `/api/v4/tasks`, `/api/v4/users`, `/api/v4/account`, notes lookup.
+2. Webhooks/Digital Pipeline — optional ускоритель, не source of truth.
+3. Telegram — optional delivery channel, не основной UI.
+4. Виджет в amoCRM — основной UI настроек и просмотра отчетов.
+5. Весь company-specific hardcode из старого проекта нужно заменить настройками.
+6. Старую SQLite-схему использовать только как inspiration, но новая БД должна быть multi-tenant.
+7. Старую бизнес-логику метрик перенести и покрыть тестами.
+8. Реализация должна быть пригодной для private MVP и public Marketplace hardening.
+
+---
+
+# 22. Документация по amoCRM/Kommo, которую нужно учитывать
+
+При реализации ориентируйся на официальную документацию amoCRM/Kommo:
+
+* Widgets / JS widget / manifest.json
+* widget locations
+* advanced settings
+* settings field types
+* OAuth 2.0 authorization for public integrations
+* disposable tokens / secure widget requests where applicable
+* events API `/api/v4/events`
+* event types `/api/v4/events/types`
+* notes API and call note params duration
+* users API `/api/v4/users`
+* account API `/api/v4/account`
+* tasks API `/api/v4/tasks`
+* webhooks
+* Digital Pipeline widgets
+* public integration requirements and moderation checklist
+* API rate limits: do not exceed 7 RPS per integration; handle 429
+
+Если локально нет интернета, реализуй по best-known API conventions and isolate all amoCRM-specific behavior in client classes so it can be corrected easily.
+
+---
+
+# 23. В конце работы
+
+В конце выведи краткий отчет:
+
+1. Что создано.
+2. Какие команды запускать.
+3. Где лежит backend.
+4. Где лежит widget.
+5. Как собрать widget.zip.
+6. Как запустить docker compose.
+7. Какие env нужно заполнить.
+8. Какие части требуют реального amoCRM аккаунта для финального ручного теста.
+9. Какие тесты добавлены.
+10. Что осталось сделать перед публикацией в amoMarket.
+
+Начинай реализацию сейчас. Не спрашивай уточнений. Прими разумные defaults и реализуй максимально полно.

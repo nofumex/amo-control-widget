@@ -1,0 +1,22 @@
+{
+  "widget": {
+    "name": "amo-control-widget",
+    "description": "Manager activity control and Telegram delivery",
+    "short_description": "Activity reports",
+    "code": "amo_control_widget_public",
+    "secret_key": "",
+    "version": "0.1.0",
+    "interface_version": 2,
+    "init_once": false,
+    "locale": ["ru", "en"],
+    "installation": true
+  },
+  "locations": ["settings", "lcard-1", "ccard-1", "comcard-1"],
+  "settings": {
+    "backend_url": {
+      "name": "Backend URL",
+      "type": "text",
+      "required": true
+    }
+  }
+}
