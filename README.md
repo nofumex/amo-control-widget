@@ -1,73 +1,86 @@
-# amo-control-widget
+﻿# amo-control-widget
 
-amo-control-widget переносит отчеты `control-agent` из Telegram-first бота в amoCRM/Kommo widget с backend-first архитектурой.
-Виджет становится главным UI для настроек и просмотра отчетов, Telegram остается опциональным каналом доставки.
+amo-control-widget is a FastAPI + TypeScript amoCRM/Kommo widget for manager activity reporting. The widget is the primary UI for settings and report viewing; Telegram is an optional tenant-scoped delivery channel.
 
-## Что внутри
+## Architecture
 
-- FastAPI backend: health, OAuth, widget API, webhooks.
-- Async worker: Redis locks, OAuth refresh/scheduler foundation.
-- PostgreSQL schema: tenants, OAuth tokens, report configs, snapshots, Telegram channels, delivery logs, call-note cache, sync state, webhook inbox.
-- Report domain logic: непрерывная работа, call duration filtering через note `params.duration`, overdue task counters, русский Telegram renderer.
-- Widget package: lightweight TypeScript UI, private/public manifests, zip build.
+- `backend/app/widget_api`: tenant-aware widget API, OAuth, webhooks.
+- `backend/app/amo`: Kommo/amoCRM OAuth, API client, rate limiting, tenant client factory.
+- `backend/app/reports`: testable report domain logic and renderer.
+- `backend/app/worker`: Redis-locked worker jobs for token refresh and retention cleanup.
+- `widget`: lightweight TypeScript widget package and deterministic zip builder.
+- `docs`: security, deployment, marketplace and operations docs.
 
-## Private и public
-
-- `private` подходит для MVP в одном amoCRM аккаунте, но БД и API все равно multi-tenant.
-- `public` готовит ту же кодовую базу к Marketplace: OAuth lifecycle, tenant isolation, encrypted tokens, moderation/security docs.
-
-## Локальный запуск
+## Local setup
 
 ```bash
 cp .env.example .env
-docker compose up --build
-curl http://localhost:8000/health
+make install
+cd widget && npm install
 ```
 
-Для реального OAuth заполните `AMO_CLIENT_ID`, `AMO_CLIENT_SECRET`, `AMO_REDIRECT_URI`, `PUBLIC_BASE_URL`,
-`FERNET_KEY` или `APP_SECRET_KEY`.
+For local API/widget development set:
 
-## Тесты и проверки
+```env
+APP_ENV=development
+ALLOW_DEV_AUTH=true
+WIDGET_DEV_TENANT_ID=1
+```
+
+Production must set `APP_ENV=production`, `ALLOW_DEV_AUTH=false`, HTTPS `PUBLIC_BASE_URL`, OAuth credentials, `FERNET_KEY`, `APP_SECRET_KEY`, `WIDGET_SIGNING_SECRET`, `WEBHOOK_SHARED_SECRET`, and `INTERNAL_ADMIN_TOKEN`.
+
+## Run
 
 ```bash
-make install
-make test
-make lint
-make typecheck
+make run-api
+make run-worker
 ```
 
-## Widget build
+Docker:
+
+```bash
+docker compose up --build
+curl http://localhost:8000/health
+curl http://localhost:8000/ready
+```
+
+## Quality gates
+
+```bash
+make lint
+make typecheck
+make test
+make widget-build
+make package-widget
+make ci
+```
+
+## Widget packaging
 
 ```bash
 cd widget
 npm install
+npm run typecheck
 npm run build
 npm run zip:private
 npm run zip:public
 ```
 
-Архивы появятся как `widget/widget-private.zip` и `widget/widget-public.zip`.
+Public archive: `widget/widget-public.zip`.
+Private/dev archive: `widget/widget-private.zip`.
 
-## Backend
+## OAuth
 
-Backend лежит в `backend/app`. Основные точки:
+1. Configure redirect URL as `https://your-domain.example/api/oauth/callback`.
+2. Open `/api/oauth/install` to create a signed OAuth state and redirect to Kommo/amoCRM authorization.
+3. Callback validates state, exchanges code, fetches account info, creates/updates tenant, and stores encrypted tokens.
 
-- `reports/` - доменная логика отчетов.
-- `amo/` - async amoCRM client, OAuth helpers, rate limiting.
-- `telegram/` - Telegram client and delivery service.
-- `widget_api/` - endpoints для виджета.
-- `db/` - SQLAlchemy models and Alembic migrations.
-- `worker/` - polling worker, Redis locks, scheduled jobs.
+Internal maintenance endpoints `/api/oauth/refresh/{tenant_id}` and `/api/oauth/disconnect/{tenant_id}` require `Authorization: Bearer INTERNAL_ADMIN_TOKEN`.
 
-## Что требует реального amoCRM аккаунта
+## Report flow
 
-- OAuth install/callback.
-- Pull `/api/v4/events`, `/api/v4/tasks`, `/api/v4/users`, `/api/v4/account`.
-- Проверка call-note lookup на реальных звонках.
-- Проверка widget install внутри amoCRM settings.
-- Финальная валидация public-mode disposable token/JWT требований для Marketplace.
+Report build endpoint uses the authenticated tenant, decrypts its amoCRM token, fetches users/events/tasks/notes through `AmoClient`, applies configured filters, stores `report_snapshots`, and returns rendered text plus JSON.
 
-## Документация
+## Public Marketplace checklist
 
-Смотрите `docs/ARCHITECTURE.md`, `docs/AMO_SETUP_PRIVATE.md`, `docs/AMO_SETUP_PUBLIC.md`,
-`docs/TELEGRAM_SETUP.md`, `docs/SECURITY.md`, `docs/DEPLOYMENT.md`, `docs/MODERATION_CHECKLIST.md`.
+See `docs/MARKETPLACE.md`. Manual Marketplace steps still required: configure production HTTPS URL, OAuth app settings, widget signing secret delivery/verification format if Kommo changes it, moderation metadata and support contacts.

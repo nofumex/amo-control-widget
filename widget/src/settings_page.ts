@@ -1,3 +1,5 @@
+﻿import { escapeHtml } from "./html";
+
 export function settingsPage(settings: Record<string, unknown>): string {
   return `
     <div class="acw-grid">
@@ -15,5 +17,5 @@ export function settingsPage(settings: Record<string, unknown>): string {
 }
 
 function input(id: string, label: string, value: unknown, type = "text"): string {
-  return `<label><span>${label}</span><input id="${id}" type="${type}" value="${String(value)}"></label>`;
+  return `<label><span>${escapeHtml(label)}</span><input id="${id}" type="${type}" value="${escapeHtml(value)}"></label>`;
 }

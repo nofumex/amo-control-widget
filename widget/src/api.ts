@@ -1,21 +1,30 @@
-export type ApiConfig = {
+﻿export type ApiConfig = {
   backendUrl: string;
-  widgetToken?: string;
-  tenantId?: string;
+  devTenantId?: string;
+  kommoAccountId?: string;
+  kommoSubdomain?: string;
+  kommoTimestamp?: string;
+  kommoSignature?: string;
 };
 
 export class WidgetApi {
   constructor(private readonly config: ApiConfig) {}
 
   async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+    if (!this.config.backendUrl) {
+      throw new Error("Backend URL не настроен. Откройте настройки виджета и укажите HTTPS URL backend.");
+    }
     const headers = new Headers(options.headers);
     headers.set("Content-Type", "application/json");
-    if (this.config.widgetToken) headers.set("X-Widget-Token", this.config.widgetToken);
-    if (this.config.tenantId) headers.set("X-Tenant-Id", this.config.tenantId);
+    if (this.config.devTenantId) headers.set("X-Dev-Tenant-Id", this.config.devTenantId);
+    if (this.config.kommoAccountId) headers.set("X-KOMMO-Account-Id", this.config.kommoAccountId);
+    if (this.config.kommoSubdomain) headers.set("X-KOMMO-Subdomain", this.config.kommoSubdomain);
+    if (this.config.kommoTimestamp) headers.set("X-KOMMO-Timestamp", this.config.kommoTimestamp);
+    if (this.config.kommoSignature) headers.set("X-KOMMO-Signature", this.config.kommoSignature);
     const response = await fetch(`${this.config.backendUrl.replace(/\/$/, "")}${path}`, { ...options, headers });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(text || `HTTP ${response.status}`);
+      throw new Error(humanApiError(response.status, text));
     }
     return response.json() as Promise<T>;
   }
@@ -35,4 +44,15 @@ export class WidgetApi {
   saveTelegram(payload: unknown) { return this.request("/api/widget/telegram", { method: "PUT", body: JSON.stringify(payload) }); }
   testTelegram() { return this.request<Record<string, unknown>>("/api/widget/telegram/test", { method: "POST" }); }
   syncNow() { return this.request<Record<string, unknown>>("/api/widget/sync", { method: "POST" }); }
+}
+
+function humanApiError(status: number, body: string): string {
+  if (status === 401) return "Нет доступа: виджет не прошел проверку подлинности.";
+  if (status === 409) return "Интеграция требует подключения или переподключения amoCRM OAuth.";
+  try {
+    const parsed = JSON.parse(body) as { detail?: string; error?: { message?: string } };
+    return parsed.detail || parsed.error?.message || `Ошибка API ${status}`;
+  } catch {
+    return body || `Ошибка API ${status}`;
+  }
 }

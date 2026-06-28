@@ -11,7 +11,14 @@ from app.core.errors import ExternalServiceError
 
 
 class AmoClient:
-    def __init__(self, base_url: str, access_token: str, *, rps_limit: float = 6.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        access_token: str,
+        *,
+        rps_limit: float = 6.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.access_token = access_token
         self.limiter = AsyncRateLimiter(rps_limit)
@@ -23,6 +30,7 @@ class AmoClient:
                 "Accept": "application/json",
                 "User-Agent": "amo-control-widget/0.1",
             },
+            transport=transport,
         )
 
     async def aclose(self) -> None:
@@ -45,7 +53,7 @@ class AmoClient:
                 if response.status_code >= 400:
                     raise ExternalServiceError(
                         f"amoCRM GET {response.url} failed: {response.status_code}",
-                        public_message="amoCRM вернула ошибку. Проверьте подключение OAuth.",
+                        public_message="amoCRM РІРµСЂРЅСѓР»Р° РѕС€РёР±РєСѓ. РџСЂРѕРІРµСЂСЊС‚Рµ РїРѕРґРєР»СЋС‡РµРЅРёРµ OAuth.",
                     )
                 return response.json()
             except httpx.HTTPError as exc:

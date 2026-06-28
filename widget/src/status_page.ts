@@ -1,3 +1,5 @@
+﻿import { escapeHtml } from "./html";
+
 export function statusPage(status: Record<string, unknown>): string {
   return `
     <div class="acw-status">
@@ -21,5 +23,5 @@ export function statusPage(status: Record<string, unknown>): string {
 }
 
 function row(label: string, value: unknown): string {
-  return `<div><strong>${label}</strong><span>${String(value ?? "-")}</span></div>`;
+  return `<div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(value ?? "-")}</span></div>`;
 }

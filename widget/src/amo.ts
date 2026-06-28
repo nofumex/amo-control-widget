@@ -1,4 +1,4 @@
-declare global {
+﻿declare global {
   interface Window {
     AMOCRM?: {
       widgets?: {
@@ -6,16 +6,30 @@ declare global {
           domain?: string;
           amouser_id?: number;
           account?: { id?: number; subdomain?: string };
+          secure?: { timestamp?: number; signature?: string };
         };
       };
     };
   }
 }
 
-export function readWidgetSettings(): { backendUrl: string; widgetToken?: string; tenantId?: string } {
+export function readWidgetSettings(): {
+  backendUrl: string;
+  devTenantId?: string;
+  kommoAccountId?: string;
+  kommoSubdomain?: string;
+  kommoTimestamp?: string;
+  kommoSignature?: string;
+} {
   const search = new URLSearchParams(window.location.search);
-  const backendUrl = search.get("backend_url") || localStorage.getItem("amoControlBackendUrl") || "http://localhost:8000";
-  const widgetToken = search.get("widget_token") || localStorage.getItem("amoControlWidgetToken") || undefined;
-  const tenantId = search.get("tenant_id") || localStorage.getItem("amoControlTenantId") || "1";
-  return { backendUrl, widgetToken, tenantId };
+  const system = window.AMOCRM?.widgets?.system;
+  const backendUrl = search.get("backend_url") || "";
+  return {
+    backendUrl,
+    devTenantId: search.get("dev_tenant_id") || undefined,
+    kommoAccountId: search.get("account_id") || String(system?.account?.id || "") || undefined,
+    kommoSubdomain: search.get("subdomain") || system?.account?.subdomain || system?.domain || undefined,
+    kommoTimestamp: search.get("kommo_timestamp") || String(system?.secure?.timestamp || "") || undefined,
+    kommoSignature: search.get("kommo_signature") || system?.secure?.signature || undefined
+  };
 }

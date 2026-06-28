@@ -1,4 +1,4 @@
-.env
+﻿.env
 .venv/
 __pycache__/
 .pytest_cache/
@@ -9,8 +9,12 @@ __pycache__/
 *.db
 logs/
 dist/
+build/
+*.egg-info/
+backend/*.egg-info/
 widget/dist/
 widget/node_modules/
 widget/*.zip
 coverage.xml
 .coverage
+htmlcov/

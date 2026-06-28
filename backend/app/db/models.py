@@ -4,7 +4,19 @@ import datetime as dt
 from typing import Any
 
 from app.db.base import Base
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,11 +30,16 @@ class TimestampMixin:
 
 class Tenant(TimestampMixin, Base):
     __tablename__ = "tenants"
+    __table_args__ = (
+        UniqueConstraint("account_id", "integration_client_id", name="uq_tenant_account_integration"),
+        Index("ix_tenants_status_created", "status", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     account_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     subdomain: Mapped[str] = mapped_column(String(255), default="", index=True)
     base_url: Mapped[str] = mapped_column(String(512), default="")
+    integration_client_id: Mapped[str] = mapped_column(String(255), default="", index=True)
     mode: Mapped[str] = mapped_column(String(32), default="private")
     status: Mapped[str] = mapped_column(String(32), default="active")
 
@@ -31,6 +48,7 @@ class Tenant(TimestampMixin, Base):
 
 class OAuthToken(TimestampMixin, Base):
     __tablename__ = "oauth_tokens"
+    __table_args__ = (UniqueConstraint("tenant_id", name="uq_oauth_token_tenant"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
@@ -99,6 +117,7 @@ class ReportSnapshot(TimestampMixin, Base):
 
 class DeliveryLog(TimestampMixin, Base):
     __tablename__ = "delivery_logs"
+    __table_args__ = (Index("ix_delivery_tenant_status_created", "tenant_id", "status", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
@@ -108,6 +127,7 @@ class DeliveryLog(TimestampMixin, Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str] = mapped_column(Text, default="")
     sent_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    idempotency_key: Mapped[str] = mapped_column(String(255), default="", index=True)
 
 
 class CallNoteCache(TimestampMixin, Base):
@@ -137,12 +157,47 @@ class SyncState(TimestampMixin, Base):
 
 class EventInbox(Base):
     __tablename__ = "event_inbox"
+    __table_args__ = (
+        UniqueConstraint("source", "dedup_key", name="uq_event_inbox_source_dedup"),
+        Index("ix_event_inbox_tenant_status_received", "tenant_id", "status", "received_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     tenant_id: Mapped[int | None] = mapped_column(ForeignKey("tenants.id", ondelete="SET NULL"), index=True)
     source: Mapped[str] = mapped_column(String(64))
+    dedup_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
-    status: Mapped[str] = mapped_column(String(32), default="pending")
+    status: Mapped[str] = mapped_column(String(32), default="received")
     received_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     processed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str] = mapped_column(Text, default="")
+
+
+class OAuthState(Base):
+    __tablename__ = "oauth_states"
+    __table_args__ = (
+        UniqueConstraint("state_hash", name="uq_oauth_state_hash"),
+        Index("ix_oauth_states_status_expires", "status", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    state_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    account_id_hint: Mapped[int | None] = mapped_column(BigInteger)
+    subdomain_hint: Mapped[str] = mapped_column(String(255), default="")
+    referer: Mapped[str] = mapped_column(String(512), default="")
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SecurityAuditLog(Base):
+    __tablename__ = "security_audit_logs"
+    __table_args__ = (Index("ix_security_audit_tenant_event_created", "tenant_id", "event_type", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(ForeignKey("tenants.id", ondelete="SET NULL"), index=True)
+    event_type: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="ok")
+    detail: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

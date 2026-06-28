@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend-widget:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: amo_control
+          POSTGRES_USER: amo
+          POSTGRES_PASSWORD: amo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: widget/package-lock.json
+      - run: python -m pip install -e ".[dev]"
+      - run: make lint
+      - run: make typecheck
+      - run: make test
+      - run: cd backend && alembic -c app/db/alembic.ini upgrade head
+        env:
+          APP_ENV: test
+          DATABASE_URL: postgresql+asyncpg://amo:amo@localhost:5432/amo_control
+          REDIS_URL: redis://localhost:6379/0
+          ALLOW_DEV_AUTH: "true"
+      - run: npm install
+        working-directory: widget
+      - run: npm run typecheck
+        working-directory: widget
+      - run: npm run build
+        working-directory: widget
+      - run: npm run zip:public
+        working-directory: widget
+      - run: docker compose config
